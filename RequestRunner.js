@@ -47,6 +47,14 @@ function RequestRunner(options, callback) {
         options = options || {};
 
         try {
+            if (options.prepareRequest){
+                // optional prep function
+                global.prepareRequest = options.prepareRequest;
+            }
+            if (options.prepareOptions){
+                // optional prep function
+                global.prepareOptions = options.prepareOptions;
+            }
 
             if (!options.config){
                 callback(new Error("missing config specification"));
@@ -54,6 +62,9 @@ function RequestRunner(options, callback) {
                 if (fs.existsSync(options.config)) {
                     global.config = JSON.parse(fs.readFileSync(options.config));
                     global.config.timeout = global.config.timeout || 1000;
+
+                    if (global.prepareOptions) global.prepareOptions();
+
                     callback();
                 } else {
                     callback(new Error("missing or invalid config specification"));
@@ -107,6 +118,10 @@ function RequestRunner(options, callback) {
                     if(testData) {
                         var test = prepareTest(testData, group.groupid, group.requests.length+1);
 
+                        if (global.prepareRequest){
+                            test = global.prepareRequest(test);
+                        }
+
                         doRequest( test, function(err, testid){
                             if (err){
                                 callback(err);
@@ -129,8 +144,12 @@ function RequestRunner(options, callback) {
                 writeToTestlog(group.groupid + " " + group.name + " : asynch");
                 // straight-up series start, asynch ends
                 for (var tt = 0; tt < group.requests.length; tt++) {
+                    var test = prepareTest(group.requests[tt], group.groupid, tt+1);
 
-                    doRequest( prepareTest(group.requests[tt], group.groupid, tt), callback);
+                    if (global.prepareRequest){
+                        test = global.prepareRequest(test);
+                    }
+                    doRequest( test, callback);
 
                 }
             }
@@ -143,7 +162,7 @@ function RequestRunner(options, callback) {
     function prepareGroup(group, num)
     {
         // group id
-        group.groupid = (num+1)*100;
+        group.groupid = (num+1)*10000;
 
         // disable selected groups
         if (global.config.disabletestgroups){

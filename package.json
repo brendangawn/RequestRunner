@@ -1,11 +1,13 @@
 {
   "name": "RequestRunner",
-  "description" : "A simple script to run a series of test requests",
+  "description": "A simple script to run a series of test requests",
   "version": "0.0.1",
-  "author": "Brendan Gawn <brendang@ssimicro.com>",
+  "author": {
+    "name": "Brendan Gawn",
+    "email": "brendang@ssimicro.com"
+  },
   "main": "RequestRunner.js",
   "dependencies": {
     "request": "*"
   }
 }
-

@@ -55,6 +55,9 @@ function RequestRunner(options, callback) {
                 // optional prep function
                 global.prepareOptions = options.prepareOptions;
             }
+            if (options.onResponse){
+                global.onResponse = options.onResponse;
+            }
 
             if (!options.config){
                 callback(new Error("missing config specification"));
@@ -185,58 +188,93 @@ function RequestRunner(options, callback) {
                 prepareGroup(global.config.groups.list[aa], aa)
             }
 
+            var loopstack = [];
             for (var ii = 0; ii < global.config.loop; ii++) {
+                loopstack[ii] = ii+1;
+            }
 
-                // count how many tests
-                for (var aa = 0; aa < global.config.groups.list.length; aa++) {
-                    m_testCount += global.config.groups.list[aa].requests.length;
-                }
-
-                if (global.config.groups.serial){
-
-                    function execGroupSeries(group) {
-                        if(group) {
-
-                            execGroup( group, function(err){
+            function nextLoop(n) {
+                if (n){
+                    // do it
+                    if (global.config.loopdelay){
+                        writeToTestlog("Pre-loop Delay " + global.config.loopdelay + " ms");
+                        setTimeout(function() {
+                            doGroups(function(err){
                                 if (err){
                                     callback(err);
-                                } else {
-                                    // completed, or timeout
-                                    execGroupSeries(global.config.groups.list.shift());
                                 }
-                            } );
-                        } else {
-                            // done
-                            callback();
-                        }
+                                // do it again?
+                                nextLoop(loopstack.shift());
+                            });
+                        }, global.config.loopdelay);
+                    } else {
+                        doGroups(function(err){
+                            if (err){
+                                callback(err);
+                            }
+                            // do it again?
+                            nextLoop(loopstack.shift());
+                        });
+
                     }
 
-                    // kickstart the series
-                    execGroupSeries(global.config.groups.list.shift());
-
-                } else {
-
-                    for (var aa = 0; aa < global.config.groups.list.length; aa++) {
-
-
-                        if (global.config.groups.list[aa].disabled){
-                            writeToTestlog("Test Group " + gid + " is disabled.");
-                            m_testCount -= alltests[aa].length;
-                        } else {
-
-                            // groups have to be made to run (complete) in order.
-                            // tests within groups are NOT guaranteed to execute to completion in order
-                            execGroup( global.config.groups.list[aa], callback );
-
-                        }
-                    }
                 }
             }
+
+            nextLoop(loopstack.shift());
+
         } catch (exc) {
 
             callback(exc);  // consumer terminates
         }
 
+    }
+
+    function doGroups(callback){
+
+        if (global.config.groups.serial){
+            // copy the groups
+            var groupCopy = JSON.parse(JSON.stringify(global.config.groups));
+
+            function execGroupSeries(group) {
+                if(group) {
+
+                    execGroup( group, function(err){
+                        if (err){
+                            callback(err);
+                        } else {
+                            // completed, or timeout
+                            execGroupSeries(groupCopy.list.shift());
+                        }
+                    } );
+                } else {
+                    // done
+                    callback();
+                }
+            }
+
+            // kickstart the series
+            execGroupSeries(groupCopy.list.shift());
+
+        } else {
+
+            for (var aa = 0; aa < global.config.groups.list.length; aa++) {
+
+
+                if (global.config.groups.list[aa].disabled){
+                    writeToTestlog("Test Group " + gid + " is disabled.");
+                    // m_testCount -= alltests[aa].length;
+                } else {
+
+                    // groups have to be made to run (complete) in order.
+                    // tests within groups are NOT guaranteed to execute to completion in order
+                    execGroup( global.config.groups.list[aa], callback );
+
+                }
+            }
+            //done
+            callback();
+        }
     }
 
 
@@ -246,6 +284,10 @@ function RequestRunner(options, callback) {
     function doRequest( reqData, callback){
 
         asynchReq(reqData, function(error, response, body){
+
+            if (global.onResponse){
+                global.onResponse(error, reqData, response, body);
+            }
 
             writeToTestlog("==============================");
             writeToTestlog("Test: " + JSON.stringify(reqData));
@@ -266,14 +308,26 @@ function RequestRunner(options, callback) {
             writeToTestlog("Disabled test: " + JSON.stringify(reqData));
             callback();
         } else {
-            writeToTestlog("Starting test: " + reqData.testid);
-            request( reqData, callback );
+            if (reqData.predelay){
+                // delayed start
+                writeToTestlog("Delaying test: " + reqData.testid + ' for ' + reqData.predelay + ' ms');
+                setTimeout(function(){
+                     writeToTestlog("Starting test: " + reqData.testid);
+                    request( reqData, callback );
+                }, reqData.predelay);
+
+            } else {
+                // do it right away
+                writeToTestlog("Starting test: " + reqData.testid);
+                request( reqData, callback );
+            }
+
+
 
         }
     }
 
     function logResponse(error, response, body){
-
         if (error) {
             writeToTestlog(error);
         } else {
@@ -282,23 +336,37 @@ function RequestRunner(options, callback) {
                 if (response.statusText) writeToTestlog("response status: " + response.statusText);
             }
             if (body){
-                if (isEmpty(body)){
-                    writeToTestlog("{}");
-                } else if (isObject(body)){
-                    writeToTestlog(body);
-                } else if (Array.isArray(JSON.parse(body))){
-                    var arr = JSON.parse(body);
-                    for (var aa = 0; aa < arr.length; aa++){
-                        writeToTestlog(arr[aa]);
+                var o = undefined;
+                try {
+                    if (Array.isArray(body)){
+                        if (body.length > 0){
+                            o = body;
+                        }
+                    } else if (isObject(body)){
+                        if (isEmpty(body)){
+                            o = {};
+                        } else {
+                            o = body;
+                        }
+                    } else {
+                        o = JSON.parse(body);
                     }
-
-                } else {
-                    writeToTestlog(body);
+                    if (o){
+                        if (Array.isArray(o)){
+                            for (var aa = 0; aa < o.length; aa++){
+                                writeToTestlog(o[aa]);
+                            }
+                            writeToTestlog("Response Array Length: " + o.length);
+                        } else {
+                            writeToTestlog(o);
+                        }
+                    }
+                } catch (ex) {
+                    writeToTestlog(ex.message);
                 }
 
             }
         }
-
     }
 
 
